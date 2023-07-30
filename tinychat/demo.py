@@ -128,6 +128,9 @@ if __name__ == '__main__':
         make_quant_attn(model, args.device)
         make_quant_norm(model)
         make_fused_mlp(model)
+    elif args.precision == "W4A16" and args.model_type.lower() == 'mpt':
+        from tinychat.modules import make_fused_mlp
+        make_fused_mlp(model)
 
     model_prompter = get_prompter(args.model_type, args.model_path)
     stop_token_ids = get_stop_token_ids(args.model_type, args.model_path) 
