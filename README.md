@@ -34,29 +34,31 @@ It also offers a turn-key solution for **on-device inferecne** of LLMs on **reso
 
 ## Install
 
-Clone this repository and install with pip.
-
+1. Clone this repository and navigate to AWQ folder
 ```
 git clone https://github.com/mit-han-lab/llm-awq
 cd llm-awq
+```
+
+2. Install Package
+```
+conda create -n awq python=3.10 -y
+conda activate awq
+pip install --upgrade pip  # enable PEP 660 support
 pip install -e .
 ```
 
-### CPU only
+* For **edge devices** like Orin, before running the commands above, please:
 
-If you want to avoid installing CUDA kernels, pass the BUILD_CUDA_EXT environment variable:
-
+    1. Modify [pyproject.toml](pyproject.toml) by commenting out [this line](https://github.com/mit-han-lab/llm-awq/blob/3fce69061682fdd528824e5da3d03a8a8b545f2a/pyproject.toml#L17).
+    2. Manually install precompiled PyTorch binaries (>=2.0.0) from [NVIDIA](https://forums.developer.nvidia.com/t/pytorch-for-jetson/72048).
+    3. Set the appropriate Python version for conda environment (e.g., `conda create -n awq python=3.8 -y` for JetPack 5).
+  
+3. Install efficient W4A16 (4-bit weight, 16-bit activation) CUDA kernel and optimized FP16 kernels (e.g. layernorm, positional encodings).
 ```
-BUILD_CUDA_EXT=0 pip install -e .
+cd awq/kernels
+python setup.py install
 ```
-
-### Edge device
-
-For **edge devices** like Jetson Orin:
-
-1. Manually install precompiled PyTorch binaries (>=2.0.0) from [NVIDIA](https://forums.developer.nvidia.com/t/pytorch-for-jetson/72048).
-2. Set the appropriate Python version for conda environment (e.g., `conda create -n awq python=3.8 -y` for JetPack 5).
-3. Install AWQ: `TORCH_IS_PREBUILT=1 pip install -e .`
 
 ## AWQ Model Zoo
 
@@ -69,13 +71,16 @@ git clone https://huggingface.co/datasets/mit-han-lab/awq-model-zoo awq_cache
 
 The detailed support list:
 
-| Models | Sizes                       | INT4-g128 | INT3-g128 |
-| ------ | --------------------------- | --------- | --------- |
-| LLaMA-2  | 7B/7B-chat/13B/13B-chat   | ✅         | ✅        |
-| LLaMA  | 7B/13B/30B/65B              | ✅         | ✅        |
-| OPT    | 125m/1.3B/2.7B/6.7B/13B/30B | ✅         | ✅        |
-| Vicuna-v1.1 | 7B/13B                 | ✅         |           |
-| LLaVA-v0 | 13B                       | ✅         |           |
+| Models   | Sizes                       | INT4-g128  | INT3-g128 |
+| ---------| ----------------------------| -----------| --------- |
+| LLaMA-2  | 7B/13B/70B                  | ✅         | ✅        |
+| LLaMA    | 7B/13B/30B/65B              | ✅         | ✅        |
+| Vicuna   | 7B/13B                      | ✅         |           |
+| MPT      | 7B/30B                      | ✅         |           |
+| Falcon   | 7B/40B                      | ✅         |           |
+| OPT      | 125m/1.3B/2.7B/6.7B/13B/30B | ✅         | ✅        |
+| Bloom    | 560m/3B/7B/                 | ✅         | ✅        |
+| LLaVA-v0 | 13B                         | ✅         |           |
 
 ## Examples
 
@@ -89,39 +94,30 @@ Note that we perform AWQ using only textual calibration data, depsite we are run
 
 ## Usage
 
-We provide several sample script to run AWQ (please refer to `./scripts`). We use OPT-6.7B as an example.
+We provide several sample script to run AWQ (please refer to `./scripts`). We use Vicuna 7B v1.5 as an example.
 
-1. Perform AWQ search and save search results (we already did it for you):
+1. Perform AWQ search and save search results
 ```bash
-python -m awq.entry --model_path /PATH/TO/OPT/opt-6.7b \
-    --w_bit 4 --q_group_size 128 \
-    --run_awq --dump_awq awq_cache/opt-6.7b-w4-g128.pt
+python -m awq.entry --entry_type search \
+    --model_path lmsys/vicuna-7b-v1.5 \
+    --search_path vicuna-7b-v1.5-awq
 ```
 
-2. Evaluate the AWQ quantized model on WikiText-2 (simulated pseudo quantization)
+Note: if you use Falcon 7B, please pass `--q_group_size 64` in order for it to work.
+
+2. Generate quantized weights and save them (INT4)
 ```bash
-python -m awq.entry --model_path /PATH/TO/OPT/opt-6.7b \
-    --tasks wikitext \
-    --w_bit 4 --q_group_size 128 \
-    --load_awq awq_cache/opt-6.7b-w4-g128.pt \
-    --q_backend fake
+python -m awq.entry --entry_type quant \
+    --model_path lmsys/vicuna-7b-v1.5 \
+    --search_path vicuna-7b-v1.5-awq/awq_model_search_result.pt \
+    --quant_path vicuna-7b-v1.5-awq
 ```
 
-3. Generate real quantized weights (INT4)
+3. Load and evaluate the perplexity of the real quantized model weights (faster and uses less memory)
 ```bash
-mkdir quant_cache
-python -m awq.entry --model_path /PATH/TO/OPT/opt-6.7b \
-    --w_bit 4 --q_group_size 128 \
-    --load_awq awq_cache/opt-6.7b-w4-g128.pt \
-    --q_backend real --dump_quant quant_cache/opt-6.7b-w4-g128-awq.pt
-```
-
-4. Load and evaluate the real quantized model (now you can see smaller gpu memory usage)
-```bash
-python -m awq.entry --model_path /PATH/TO/OPT/opt-6.7b \
-    --tasks wikitext \
-    --w_bit 4 --q_group_size 128 \
-    --load_quant quant_cache/opt-6.7b-w4-g128-awq.pt
+python -m awq.entry --entry_type perplexity \
+    --quant_path vicuna-7b-v1.5-awq \
+    --quant_file awq_model_w4_g128.pt
 ```
 
 ## Reference
